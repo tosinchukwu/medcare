@@ -5,13 +5,20 @@
  * This file imports nothing from src/ so it deploys as a standalone function.
  */
 import { createHash } from 'node:crypto'
-import { initiateDeveloperControlledWalletsClient } from '@circle-fin/developer-controlled-wallets'
+import * as circleSdk from '@circle-fin/developer-controlled-wallets'
+
+// A namespace import never fails at link time, whichever build of the SDK Node picks. Depending on
+// the runtime the client factory is a named export or sits on `default`, so accept both.
+type Sdk = typeof circleSdk
+const sdkModule = circleSdk as Sdk & { default?: Partial<Sdk> }
+const initiateClient: Sdk['initiateDeveloperControlledWalletsClient'] | undefined =
+  sdkModule.initiateDeveloperControlledWalletsClient ?? sdkModule.default?.initiateDeveloperControlledWalletsClient
 
 export type ApiRequest = { method?: string; body?: unknown; query?: Record<string, string | string[] | undefined> }
 export type ApiResponse = { status: (code: number) => ApiResponse; json: (body: unknown) => void }
 export type Result = { status: number; body: unknown }
 
-type CircleClient = ReturnType<typeof initiateDeveloperControlledWalletsClient>
+type CircleClient = ReturnType<Sdk['initiateDeveloperControlledWalletsClient']>
 type Blockchains = Parameters<CircleClient['createWallets']>[0]['blockchains']
 type ListBlockchain = NonNullable<Parameters<CircleClient['listWallets']>[0]>['blockchain']
 
@@ -53,7 +60,8 @@ const isConfigured = () => Boolean(apiKey && entitySecret && bookingAddress && B
 let cached: CircleClient | undefined
 async function getClient(): Promise<CircleClient> {
   if (!apiKey || !entitySecret || !isConfigured()) throw new Error('Wallet service is not configured')
-  cached ??= initiateDeveloperControlledWalletsClient({ apiKey, entitySecret })
+  if (!initiateClient) throw new Error('Circle SDK could not be loaded in this runtime')
+  cached ??= initiateClient({ apiKey, entitySecret })
   return cached
 }
 
