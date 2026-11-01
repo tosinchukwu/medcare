@@ -23,7 +23,7 @@ async function post<T>(path: string, body: Record<string, unknown>): Promise<T> 
     body: JSON.stringify({ token: getCircleToken(), ...body }),
   })
   const data = (await res.json().catch(() => ({}))) as T & { error?: string }
-  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`)
+  if (!res.ok || data.error) throw new Error(data.error ?? `Request failed (${res.status})`)
   return data
 }
 
