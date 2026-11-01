@@ -52,3 +52,6 @@ bun run contracts:test   # run the contract tests
 Deploying to Arc mainnet is done by you; see [docs/mainnet-deploy.md](docs/mainnet-deploy.md).
 
 Never commit `.env` or the entity secret recovery file.
+
+
+© 2026 Tosin Olaitan. All rights reserved.
