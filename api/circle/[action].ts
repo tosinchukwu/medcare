@@ -6,17 +6,16 @@ cd /mnt/sdcard/download/medcare && mkdir -p api/circle && cat > 'api/circle/[act
  * This file imports nothing from src/ so it deploys as a standalone function.
  */
 import { createHash } from 'node:crypto'
-import { createRequire } from 'node:module'
-
+// Load Circle SDK only when needed.
 type Sdk = typeof import('@circle-fin/developer-controlled-wallets')
-const nodeRequire = typeof require === 'function' ? require : createRequire(import.meta.url)
-const { initiateDeveloperControlledWalletsClient } = nodeRequire('@circle-fin/developer-controlled-wallets') as Sdk
+let sdk: Promise<Sdk> | undefined
+const loadSdk = () => (sdk ??= import('@circle-fin/developer-controlled-wallets'))
 
 export type ApiRequest = { method?: string; body?: unknown; query?: Record<string, string | string[] | undefined> }
 export type ApiResponse = { status: (code: number) => ApiResponse; json: (body: unknown) => void }
 export type Result = { status: number; body: unknown }
 
-type CircleClient = ReturnType<typeof initiateDeveloperControlledWalletsClient>
+type CircleClient = ReturnType<Sdk['initiateDeveloperControlledWalletsClient']>
 type Blockchains = Parameters<CircleClient['createWallets']>[0]['blockchains']
 type ListBlockchain = NonNullable<Parameters<CircleClient['listWallets']>[0]>['blockchain']
 
@@ -49,8 +48,9 @@ const ALLOWED: Record<string, { target: 'usdc' | 'booking'; checks: RegExp[] }> 
 const isConfigured = () => Boolean(apiKey && entitySecret && bookingAddress && BLOCKCHAIN)
 
 let cached: CircleClient | undefined
-function getClient(): CircleClient {
+async function getClient(): Promise<CircleClient> {
   if (!apiKey || !entitySecret || !isConfigured()) throw new Error('Wallet service is not configured')
+  const { initiateDeveloperControlledWalletsClient } = await loadSdk()
   cached ??= initiateDeveloperControlledWalletsClient({ apiKey, entitySecret })
   return cached
 }
@@ -91,7 +91,7 @@ export async function handleStatus(): Promise<Result> {
 export async function handleWallet(body: unknown): Promise<Result> {
   const token = (body as { token?: unknown } | null)?.token
   if (!validToken(token)) return { status: 400, body: { error: 'Invalid session' } }
-  const client = getClient()
+  const client = await getClient()
   const existing = await findWallet(client, token)
   if (existing) return { status: 200, body: existing }
 
@@ -113,7 +113,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 export async function handleExec(body: unknown): Promise<Result> {
   const { token, signature, params } = (body ?? {}) as { token?: unknown; signature?: unknown; params?: unknown }
   if (!validToken(token)) return { status: 400, body: { error: 'Invalid session' } }
-  const client = getClient()
+  const client = await getClient()
   const wallet = await findWallet(client, token)
   if (!wallet) return { status: 400, body: { error: 'Wallet not found' } }
 
@@ -163,7 +163,7 @@ export async function handleCheck(): Promise<Result> {
     return { status: 200, body: { ok: false, network: IS_MAINNET ? 'mainnet' : 'testnet', missing } }
   }
   try {
-    await getClient().listWalletSets({ pageSize: 1 })
+      await (await getClient()).listWalletSets({ pageSize: 1 })
     return { status: 200, body: { ok: true, network: IS_MAINNET ? 'mainnet' : 'testnet', blockchain: BLOCKCHAIN } }
   } catch (error) {
     const e = error as { message?: string; response?: { status?: number } }
