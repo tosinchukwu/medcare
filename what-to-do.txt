@@ -1,0 +1,94 @@
+CAREDESK: WHAT YOU NEED TO DO YOURSELF FOR MAINNET
+====================================================
+
+Arc Studio has not deployed anything to Arc mainnet and has not moved any funds.
+The app is switched to mainnet in code, but these last steps are yours.
+
+IMPORTANT BEFORE YOU START
+- Real USDC. Transactions are irreversible.
+- The booking contract was reviewed and unit tested by Arc Studio, but it has NOT had an
+  independent professional audit. Get one before real money goes through it.
+- Do the whole flow on Arc Testnet first (book, confirm, dispute, refund, withdraw).
+  To use testnet: remove VITE_NETWORK from .env (or set VITE_NETWORK=testnet) and restart.
+
+
+STEP 1. MERGE THE PULL REQUEST
+- Review the changes on GitHub and merge the pull request.
+- Then on your machine:  git checkout main && git pull
+- Install:  bun install      (needs Bun, and Foundry for the contract: https://getfoundry.sh)
+
+
+STEP 2. DECIDE THESE THREE THINGS (they are fixed forever once deployed)
+- ADMIN wallet: owns the contract, approves doctors, resolves disputes, pauses bookings.
+- TREASURY wallet: receives the platform fee.
+- FEE in basis points: 500 = 5%. The maximum allowed is 1000 (10%).
+Use wallets you control and have double-checked. Do not reuse the testnet addresses
+without confirming them.
+
+
+STEP 3. DEPLOY THE CONTRACT TO ARC MAINNET
+Fund your deployer wallet with a little real USDC on Arc mainnet (USDC is the gas token).
+In your own terminal:
+
+  forge build
+
+  export PRIVATE_KEY=<your deployer key>     # set it in your terminal only, never in a file or chat
+
+  forge create contracts/ConsultationBooking.sol:ConsultationBooking \
+    --rpc-url https://rpc.mainnet.arc.io \
+    --private-key $PRIVATE_KEY \
+    --broadcast \
+    --constructor-args 0x3600000000000000000000000000000000000000 <ADMIN_WALLET> <TREASURY_WALLET> <FEE_BPS>
+
+0x3600...0000 is the Arc USDC address. A keystore (cast wallet import, then --account) is
+safer than a raw key. Copy the "Deployed to:" address from the output.
+
+
+STEP 4. CHECK THE DEPLOYMENT
+All four must match what you intended:
+
+  cast call <DEPLOYED_ADDRESS> "owner()(address)"        --rpc-url https://rpc.mainnet.arc.io
+  cast call <DEPLOYED_ADDRESS> "treasury()(address)"     --rpc-url https://rpc.mainnet.arc.io
+  cast call <DEPLOYED_ADDRESS> "platformFeeBps()(uint16)" --rpc-url https://rpc.mainnet.arc.io
+  cast call <DEPLOYED_ADDRESS> "usdc()(address)"         --rpc-url https://rpc.mainnet.arc.io
+
+
+STEP 5. SET YOUR ENVIRONMENT FILE (.env, never commit it)
+  VITE_NETWORK=mainnet
+  VITE_BOOKING_CONTRACT_ADDRESS_MAINNET=<DEPLOYED_ADDRESS>
+
+Restart after editing .env:  bun run dev
+(If you host the app, set the same variables in your host's settings and rebuild.)
+
+
+STEP 6. OPTIONAL: CIRCLE MANAGED WALLETS ON MAINNET
+Skip this if patients will only pay with their own wallet.
+- Create a MAINNET API key in the Circle Console (https://console.circle.com) and set
+  CIRCLE_API_KEY to it.
+- Your entity secret carries over. Keep CIRCLE_ENTITY_SECRET and your recovery file
+  backed up in two separate secure places. If you lose either, access to the wallets is lost.
+- Look up the blockchain identifier Circle uses for Arc mainnet in Circle's docs and set
+  CIRCLE_WALLET_BLOCKCHAIN to it. Until it is set, managed wallets stay off on mainnet.
+- Start the wallet service:  bun run server
+  This is a separate backend. If you deploy the web app to a static host, you must host this
+  service too and route /api to it.
+- Mainnet wallets are stored in server/data.mainnet.json (not committed). Back it up. Losing
+  it means losing the link between patients' browsers and their managed wallets.
+
+
+STEP 7. FIRST REAL TRANSACTIONS
+1. Connect the ADMIN wallet, open the Admin tab, and approve a doctor (wallet address, name,
+   specialty, fee in USDC).
+2. Fund a patient wallet with a very small amount of real USDC (or bridge in with CCTP / Gateway
+   from the Add funds tab).
+3. Book, have the doctor mark it done, confirm as the patient, and withdraw as the doctor.
+4. Test a cancel and a refund too. Only then open the app to other people.
+
+
+KEEP IN MIND
+- The doctor, admin and treasury roles are fixed in the contract. Ownership cannot be renounced.
+- Patient notes are stored only in the patient's browser. Clearing site data removes them.
+- Pausing bookings never blocks refunds or settlement of existing bookings.
+- Never share or commit: .env, your deployer key, CIRCLE_API_KEY, CIRCLE_ENTITY_SECRET, or the
+  recovery file.
+- Rotate any secret that was ever pasted into a chat or a ticket.
