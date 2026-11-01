@@ -40,4 +40,4 @@ export default defineConfig({
     // The wallet service (server/index.ts) runs on 3001; only the Vite port is exposed to the preview.
     },
   },
-})
+)
