@@ -205,4 +205,3 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
   await target(req, res)
 }
-EOF
