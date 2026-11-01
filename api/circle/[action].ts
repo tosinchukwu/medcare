@@ -1,29 +1,27 @@
-// The Circle SDK is loaded on first use, never at startup, so /status and /check still answer
-// (and show a readable error) even if the SDK cannot be loaded in this runtime.
-// It is loaded through require() on purpose: the package's ES build is a plain .js file with ESM
-// syntax, which Node versions before 22.12 refuse to import ("Cannot use import statement outside
-// a module"). Its CommonJS build loads on every Node version.
-type Sdk = typeof import('@circle-fin/developer-controlled-wallets')
-let sdk: Promise<Sdk> | undefined
-const loadSdk = () =>
-  (sdk ??= import('node:module').then(({ createRequire }) => {
-    const load = typeof require === 'function' ? require : createRequire(import.meta.url)
-    return load('@circle-fin/developer-controlled-wallets') as Sdk
-  }))
-
+/**
+ * Managed-wallet logic shared by the Vercel functions in /api and the local dev server.
+ * Stateless on purpose: Vercel has no persistent disk, so a patient's wallet is found
+ * through Circle by a reference id derived from a secret that only their browser holds.
+ * This file imports nothing from src/ so it deploys as a standalone function.
+ */
+import { createHash } from 'node:crypto'
+import { initiateDeveloperControlledWalletsClient } from '@circle-fin/developer-controlled-wallets'
 
 export type ApiRequest = { method?: string; body?: unknown; query?: Record<string, string | string[] | undefined> }
 export type ApiResponse = { status: (code: number) => ApiResponse; json: (body: unknown) => void }
 export type Result = { status: number; body: unknown }
 
-type CircleClient = ReturnType<Sdk['initiateDeveloperControlledWalletsClient']>
+type CircleClient = ReturnType<typeof initiateDeveloperControlledWalletsClient>
 type Blockchains = Parameters<CircleClient['createWallets']>[0]['blockchains']
 type ListBlockchain = NonNullable<Parameters<CircleClient['listWallets']>[0]>['blockchain']
 
 const env = process.env
 const IS_MAINNET = env.VITE_NETWORK === 'mainnet'
+
+// Arc's USDC predeploy is the same address on every Arc network.
 const USDC_ADDRESS = '0x3600000000000000000000000000000000000000'
 const bookingAddress = IS_MAINNET ? env.VITE_BOOKING_CONTRACT_ADDRESS_MAINNET : env.VITE_BOOKING_CONTRACT_ADDRESS_TESTNET
+// Circle's identifier for Arc mainnet must be set explicitly (ARC). Testnet is ARC-TESTNET.
 const BLOCKCHAIN = IS_MAINNET ? env.CIRCLE_WALLET_BLOCKCHAIN : 'ARC-TESTNET'
 const apiKey = env.CIRCLE_API_KEY
 const entitySecret = env.CIRCLE_ENTITY_SECRET ?? env.ENTITY_SECRET
@@ -33,10 +31,14 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 const UINT = /^\d{1,78}$/
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/
 
+/** Only these calls can ever be sent from a managed wallet. */
 const ALLOWED: Record<string, { target: 'usdc' | 'booking'; checks: RegExp[] }> = {
   'approve(address,uint256)': { target: 'usdc', checks: [ADDRESS, UINT] },
   'transfer(address,uint256)': { target: 'usdc', checks: [ADDRESS, UINT] },
-  'bookConsultation(address,uint64,uint32,bytes32,uint256)': { target: 'booking', checks: [ADDRESS, UINT, UINT, BYTES32, UINT] },
+  'bookConsultation(address,uint64,uint32,bytes32,uint256)': {
+    target: 'booking',
+    checks: [ADDRESS, UINT, UINT, BYTES32, UINT],
+  },
   'cancelConsultation(uint256)': { target: 'booking', checks: [UINT] },
   'confirmCompletion(uint256)': { target: 'booking', checks: [UINT] },
   'disputeCompletion(uint256)': { target: 'booking', checks: [UINT] },
@@ -51,7 +53,6 @@ const isConfigured = () => Boolean(apiKey && entitySecret && bookingAddress && B
 let cached: CircleClient | undefined
 async function getClient(): Promise<CircleClient> {
   if (!apiKey || !entitySecret || !isConfigured()) throw new Error('Wallet service is not configured')
-  const { initiateDeveloperControlledWalletsClient } = await loadSdk()
   cached ??= initiateDeveloperControlledWalletsClient({ apiKey, entitySecret })
   return cached
 }
@@ -60,6 +61,7 @@ const validToken = (t: unknown): t is string => typeof t === 'string' && /^[0-9a
 const digest = (token: string) => createHash('sha256').update(token).digest('hex')
 const refIdFor = (token: string) => digest(token).slice(0, 32)
 
+/** Deterministic UUIDv4-shaped key so two simultaneous first requests create only one wallet. */
 function idempotencyKeyFor(token: string, scope: string) {
   const h = createHash('sha256').update(`${scope}:${token}`).digest('hex')
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`
@@ -67,6 +69,7 @@ function idempotencyKeyFor(token: string, scope: string) {
 
 async function ensureWalletSet(client: CircleClient): Promise<string> {
   if (env.CIRCLE_WALLET_SET_ID) return env.CIRCLE_WALLET_SET_ID
+  // Wallet sets are not chain specific, so reuse the account's first one if it has any.
   const existing = await client.listWalletSets({ pageSize: 1 })
   const found = existing.data?.walletSets?.[0]
   if (found?.id) return found.id
@@ -93,6 +96,7 @@ export async function handleWallet(body: unknown): Promise<Result> {
   const token = (body as { token?: unknown } | null)?.token
   if (!validToken(token)) return { status: 400, body: { error: 'Invalid session' } }
   const client = await getClient()
+
   const existing = await findWallet(client, token)
   if (existing) return { status: 200, body: existing }
 
@@ -124,6 +128,7 @@ export async function handleExec(body: unknown): Promise<Result> {
   }
   const values: string[] = []
   for (const [i, p] of (params as unknown[]).entries()) {
+    // The browser cannot choose the spender: approvals always go to the booking contract.
     const v = p === 'BOOKING' && i === 0 && signature === 'approve(address,uint256)' ? bookingAddress : p
     if (typeof v !== 'string' || !rule.checks[i].test(v)) return { status: 400, body: { error: 'Invalid parameter' } }
     values.push(v)
@@ -139,6 +144,7 @@ export async function handleExec(body: unknown): Promise<Result> {
   const id = sent.data?.id
   if (!id) throw new Error('Circle did not return a transaction id')
 
+  // Only COMPLETE is success. CONFIRMED means included in a block but not final.
   const deadline = Date.now() + 50_000
   for (;;) {
     const tx = (await client.getTransaction({ id })).data?.transaction
@@ -153,6 +159,7 @@ export async function handleExec(body: unknown): Promise<Result> {
   }
 }
 
+/** Reports whether the Circle credentials actually work. Never returns secrets. */
 export async function handleCheck(): Promise<Result> {
   if (!isConfigured()) {
     const missing = [
@@ -164,7 +171,7 @@ export async function handleCheck(): Promise<Result> {
     return { status: 200, body: { ok: false, network: IS_MAINNET ? 'mainnet' : 'testnet', missing } }
   }
   try {
-      await (await getClient()).listWalletSets({ pageSize: 1 })
+    await (await getClient()).listWalletSets({ pageSize: 1 })
     return { status: 200, body: { ok: true, network: IS_MAINNET ? 'mainnet' : 'testnet', blockchain: BLOCKCHAIN } }
   } catch (error) {
     const e = error as { message?: string; response?: { status?: number } }
@@ -172,6 +179,7 @@ export async function handleCheck(): Promise<Result> {
   }
 }
 
+/** Wraps a handler as a Vercel function: method check, JSON body, error mapping. */
 export function route(method: 'GET' | 'POST', fn: (body: unknown) => Promise<Result>) {
   return async (req: ApiRequest, res: ApiResponse) => {
     if (req.method !== method) {
@@ -189,6 +197,7 @@ export function route(method: 'GET' | 'POST', fn: (body: unknown) => Promise<Res
   }
 }
 
+// Waits for the transaction to settle, so allow more than the default time.
 export const config = { maxDuration: 60 }
 
 const routes: Record<string, ReturnType<typeof route>> = {
@@ -198,6 +207,7 @@ const routes: Record<string, ReturnType<typeof route>> = {
   exec: route('POST', handleExec),
 }
 
+/** One function serves /api/circle/status, /check, /wallet and /exec. */
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   const action = Array.isArray(req.query?.action) ? req.query.action[0] : req.query?.action
   const target = action ? routes[action] : undefined

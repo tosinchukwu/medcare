@@ -24,7 +24,7 @@ function Shell() {
   const isOwner = owner.data?.toLowerCase() === lower
   const visibleTabs: TabId[] = ['doctors', 'consultations', 'funds']
   if (isDoctor) visibleTabs.push('desk')
-  if (isOwner) visibleTabs.push('admin')
+  visibleTabs.push('admin')
   const activeTab = visibleTabs.includes(tab) ? tab : 'doctors'
   const patientTab = activeTab === 'doctors' || activeTab === 'consultations' || activeTab === 'funds'
 
