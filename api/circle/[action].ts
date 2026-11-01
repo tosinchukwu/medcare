@@ -1,4 +1,3 @@
-cd /mnt/sdcard/download/medcare && mkdir -p api/circle && cat > 'api/circle/[action].ts' <<'EOF'
 /**
  * Managed-wallet logic shared by the Vercel functions in /api and the local dev server.
  * Stateless on purpose: Vercel has no persistent disk, so a patient's wallet is found
