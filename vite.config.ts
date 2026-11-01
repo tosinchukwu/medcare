@@ -38,12 +38,6 @@ export default defineConfig({
     allowedHosts: true,
     cors: true,
     // The wallet service (server/index.ts) runs on 3001; only the Vite port is exposed to the preview.
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api/, ''),
-      },
     },
   },
 })
