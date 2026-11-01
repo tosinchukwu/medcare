@@ -1,14 +1,16 @@
-/**
- * Managed-wallet logic shared by the Vercel functions in /api and the local dev server.
- * Stateless on purpose: Vercel has no persistent disk, so a patient's wallet is found
- * through Circle by a reference id derived from a secret that only their browser holds.
- * This file imports nothing from src/ so it deploys as a standalone function.
- */
-import { createHash } from 'node:crypto'
-// Load Circle SDK only when needed.
+// The Circle SDK is loaded on first use, never at startup, so /status and /check still answer
+// (and show a readable error) even if the SDK cannot be loaded in this runtime.
+// It is loaded through require() on purpose: the package's ES build is a plain .js file with ESM
+// syntax, which Node versions before 22.12 refuse to import ("Cannot use import statement outside
+// a module"). Its CommonJS build loads on every Node version.
 type Sdk = typeof import('@circle-fin/developer-controlled-wallets')
 let sdk: Promise<Sdk> | undefined
-const loadSdk = () => (sdk ??= import('@circle-fin/developer-controlled-wallets'))
+const loadSdk = () =>
+  (sdk ??= import('node:module').then(({ createRequire }) => {
+    const load = typeof require === 'function' ? require : createRequire(import.meta.url)
+    return load('@circle-fin/developer-controlled-wallets') as Sdk
+  }))
+
 
 export type ApiRequest = { method?: string; body?: unknown; query?: Record<string, string | string[] | undefined> }
 export type ApiResponse = { status: (code: number) => ApiResponse; json: (body: unknown) => void }
