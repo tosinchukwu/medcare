@@ -1,8 +1,11 @@
-import { createPublicClient, type Address, type Transport } from 'viem'
+import { createPublicClient, type Address } from 'viem'
 import { arc } from 'viem/chains'
 import {
-  createRpClient,
-  toCircleModularWalletClient,
+  type WebAuthnAccount,
+  toWebAuthnAccount,
+} from 'viem/account-abstraction'
+
+import {
   toCircleSmartAccount,
   toModularTransport,
   toPasskeyTransport,
@@ -10,33 +13,56 @@ import {
   WebAuthnMode,
 } from '@circle-fin/modular-wallets-core'
 
-const circleClientKey = (import.meta.env.VITE_CIRCLE_CLIENT_KEY) as string | undefined
+const circleClientKey = import.meta.env.VITE_CIRCLE_CLIENT_KEY as string | undefined
+
 const circleClientUrl = 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
 
 export const modularWalletAvailable = Boolean(circleClientKey)
 
 function requireClientKey() {
   if (!circleClientKey) {
-    throw new Error('Circle client key is not configured for this preview.')
+    throw new Error('Circle Client Key is not configured.')
   }
+
   return circleClientKey
 }
 
-export function createPasskeyRpClient() {
-  const transport = toPasskeyTransport(circleClientUrl, requireClientKey()) as unknown as Transport
-  return createRpClient({ name: 'CareDesk', transport } as any)
-}
+const passkeyTransport = toPasskeyTransport(
+  circleClientUrl,
+  requireClientKey()
+)
+
+const modularTransport = toModularTransport(
+  `${circleClientUrl}/arc`,
+  requireClientKey()
+)
+
+const client = createPublicClient({
+  chain: arc,
+  transport: modularTransport,
+})
 
 export async function registerPasskey(username: string) {
-  const rpClient = createPasskeyRpClient()
   const credential = await toWebAuthnCredential({
-    transport: rpClient.transport as unknown as Transport,
+    transport: passkeyTransport,
     username,
     mode: WebAuthnMode.Register,
   })
-  const client = toCircleModularWalletClient({
-    client: createPublicClient({ chain: arc, transport: toModularTransport(circleClientUrl, requireClientKey()) }),
+
+  const owner = toWebAuthnAccount({
+    credential,
+  }) as WebAuthnAccount
+
+  const account = await toCircleSmartAccount({
+    client,
+    owner,
+    name: username,
   })
-  const account = await toCircleSmartAccount({ client, owner: credential as any })
-  return { address: account.address as Address, credentialId: credential.id, account, client }
+
+  return {
+    address: account.address as Address,
+    credentialId: credential.id,
+    account,
+    client,
+  }
 }
