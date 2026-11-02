@@ -14,7 +14,7 @@ type Row = { chain: string; amount: string }
 
 export function GatewayPanel() {
   const { address: walletAddress } = useAccount()
-  const { address: payerAddress, mode } = usePayer()
+  const { address: payerAddress } = usePayer()
   const getAdapter = useAdapter()
   const queryClient = useQueryClient()
 
@@ -162,7 +162,7 @@ export function GatewayPanel() {
       </p>
 
       <div className="mt-4 text-xs font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--subtle)' }}>
-        2. Send to Arc ({mode === 'wallet' ? 'your wallet' : 'Circle wallet'})
+        2. Send to Arc (your wallet)
       </div>
       <div className="mt-2 flex gap-2">
         <input

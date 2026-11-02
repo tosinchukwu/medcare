@@ -16,7 +16,7 @@ type Step = { name: string; state: string; txHash?: string; explorerUrl?: string
 
 export function CctpBridge() {
   const { address: walletAddress } = useAccount()
-  const { address: payerAddress, mode } = usePayer()
+  const { address: payerAddress } = usePayer()
   const getAdapter = useAdapter()
   const queryClient = useQueryClient()
   const [source, setSource] = useState<(typeof SOURCE_CHAINS)[number]>(SOURCE_CHAINS[0])
@@ -116,7 +116,7 @@ export function CctpBridge() {
         <div className="mt-1 flex justify-between">
           <span style={{ color: 'var(--muted)' }}>Recipient</span>
           <span className="mono text-xs">
-            {payerAddress ? `${shortAddr(payerAddress)} (${mode === 'wallet' ? 'your wallet' : 'Circle wallet'})` : 'Connect to choose'}
+            {payerAddress ? `${shortAddr(payerAddress)} (your wallet)` : 'Connect to choose'}
           </span>
         </div>
       </div>

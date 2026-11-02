@@ -14,7 +14,7 @@ export function useNow(intervalMs = 15000) {
 }
 
 export function MyConsultations({ onFindDoctor }: { onFindDoctor: () => void }) {
-  const { address, mode } = usePayer()
+  const { address } = usePayer()
   const { bookings, isLoading } = useBookingsFor(address, 'patient')
   const now = useNow()
 
@@ -22,11 +22,7 @@ export function MyConsultations({ onFindDoctor }: { onFindDoctor: () => void }) 
     return (
       <EmptyState
         title="Connect to see your consultations"
-        body={
-          mode === 'wallet'
-            ? 'Connect your wallet to load the consultations booked from it.'
-            : 'Your Circle wallet is still loading, or the backend is not running.'
-        }
+        body="Connect your wallet to load the consultations booked from it."
       />
     )
   if (isLoading)
@@ -39,7 +35,7 @@ export function MyConsultations({ onFindDoctor }: { onFindDoctor: () => void }) 
     return (
       <EmptyState
         title="No consultations yet"
-        body={`Nothing booked from this ${mode === 'wallet' ? 'wallet' : 'Circle wallet'} yet.`}
+        body="Nothing booked from this wallet yet."
         action={
           <button onClick={onFindDoctor} className="btn-primary min-h-11 rounded-2xl px-5 text-sm font-semibold">
             Find a doctor

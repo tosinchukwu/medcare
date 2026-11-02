@@ -38,7 +38,7 @@ export function BookingSheet({
   onClose: () => void
   onBooked: () => void
 }) {
-  const { address, mode, circleConfigured } = usePayer()
+  const { address } = usePayer()
   const { execute, pendingKind, isPending } = useAction()
   const busy = useDoctorBusy(doctor?.doctor)
   const allowance = useUsdcAllowance(address)
@@ -99,11 +99,7 @@ export function BookingSheet({
   }
 
   const label = !address
-    ? mode === 'circle'
-      ? circleConfigured
-        ? 'Preparing Circle wallet…'
-        : 'Backend not running'
-      : 'Connect a wallet to book'
+    ? 'Connect a wallet to book'
     : slot === undefined
       ? 'Pick a time'
       : !enoughBalance

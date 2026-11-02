@@ -55,13 +55,10 @@ VITE_BOOKING_CONTRACT_ADDRESS_MAINNET=<DEPLOYED_ADDRESS>
 
 Restart `bun run dev` after editing `.env`. Set `VITE_NETWORK=testnet` (or remove it) to return to Arc Testnet; the testnet contract address stays in `VITE_BOOKING_CONTRACT_ADDRESS_TESTNET`.
 
-## 5. Circle wallets on mainnet (optional)
 
 Managed wallets need credentials from your own Circle mainnet account:
 
-- Create a mainnet API key in the Circle Console and set `CIRCLE_API_KEY` to it.
-- The entity secret registration carries over as long as you still hold the recovery file.
-- Check Circle's docs for the blockchain identifier used for Arc mainnet and set `CIRCLE_WALLET_BLOCKCHAIN` to it. Until it is set, the wallet service stays disabled on mainnet.
+
 - Mainnet wallets are stored separately from testnet ones (`server/data.mainnet.json`).
 
 Then restart `bun run server`.

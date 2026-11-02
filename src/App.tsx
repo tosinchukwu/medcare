@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { Header, type TabId } from '@/components/Header'
 import { PayerProvider } from '@/hooks/usePayer'
+import { ModularWalletProvider } from '@/hooks/useModularWallet'
 import { PayerSwitch } from '@/components/PayerSwitch'
 import { DoctorList } from '@/components/DoctorList'
 import { BookingSheet } from '@/components/BookingSheet'
@@ -68,8 +69,10 @@ function Shell() {
 
 export default function App() {
   return (
-    <PayerProvider>
-      <Shell />
-    </PayerProvider>
+    <ModularWalletProvider>
+      <PayerProvider>
+        <Shell />
+      </PayerProvider>
+    </ModularWalletProvider>
   )
 }

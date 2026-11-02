@@ -4,7 +4,7 @@
 
 ## What this app does
 
-Medical consultation booking paid in USDC on Arc Testnet. Escrow contract holds the fee until the patient confirms (or 24h passes without dispute). Patients pay from a browser wallet or a managed Circle wallet; funding via CCTP bridge and Gateway unified balance (Circle App Kit).
+Medical consultation booking paid in USDC on Arc. Escrow contract holds the fee until the patient confirms (or 24h passes without dispute). Patients pay from a browser wallet; funding via CCTP bridge and Gateway unified balance (Circle App Kit).
 
 ## Deployed contracts (Arc Testnet, chain 5042002)
 
@@ -19,13 +19,14 @@ Medical consultation booking paid in USDC on Arc Testnet. Escrow contract holds 
 
 - Contract reviewed (two rounds) and unit tested (74 tests). Payouts to doctor/treasury are pull-based (`withdraw`) so a blocked recipient cannot lock a booking.
 - Notes are never onchain: salted hash only, plaintext in browser localStorage.
-- Circle wallets: `server/index.ts` (port 3001, proxied at `/api`). Wallet is bound to a random secret kept in the browser (hash stored in `server/data.json`). Only a whitelist of calls can be sent. Requires `CIRCLE_API_KEY` and `CIRCLE_ENTITY_SECRET`.
+
 - Doctor and admin actions always sign with the browser wallet.
 
 ## Key files
 
 - `contracts/ConsultationBooking.sol`, tests in `contracts/test/`
-- `src/hooks/usePayer.tsx` (wallet vs Circle wallet), `src/lib/payerCalls.ts`
+ - `src/hooks/usePayer.tsx` (browser wallet), `src/lib/payerCalls.ts`
+
 - `src/components/` (DoctorList, BookingSheet, MyConsultations, FundPanel, CctpBridge, GatewayPanel, DoctorDesk, AdminPanel)
 - `server/index.ts` wallet service
 
