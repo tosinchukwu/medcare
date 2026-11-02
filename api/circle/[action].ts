@@ -2,25 +2,14 @@
  * Managed-wallet logic shared by the Vercel functions in /api and the local dev server.
  * Stateless on purpose: Vercel has no persistent disk, so a patient's wallet is found
  * through Circle by a reference id derived from a secret that only their browser holds.
- * This file imports nothing from src/ so it deploys as a standalone function.
+ * This file imports nothing from src/ and no SDK: it talks to Circle's REST API with fetch, so there
+ * is nothing for the host to bundle and nothing that can fail to load at startup.
  */
-import { createHash } from 'node:crypto'
-import * as circleSdk from '@circle-fin/developer-controlled-wallets'
-
-// A namespace import never fails at link time, whichever build of the SDK Node picks. Depending on
-// the runtime the client factory is a named export or sits on `default`, so accept both.
-type Sdk = typeof circleSdk
-const sdkModule = circleSdk as Sdk & { default?: Partial<Sdk> }
-const initiateClient: Sdk['initiateDeveloperControlledWalletsClient'] | undefined =
-  sdkModule.initiateDeveloperControlledWalletsClient ?? sdkModule.default?.initiateDeveloperControlledWalletsClient
+import { createHash, constants, publicEncrypt, randomUUID } from 'node:crypto'
 
 export type ApiRequest = { method?: string; body?: unknown; query?: Record<string, string | string[] | undefined> }
 export type ApiResponse = { status: (code: number) => ApiResponse; json: (body: unknown) => void }
 export type Result = { status: number; body: unknown }
-
-type CircleClient = ReturnType<Sdk['initiateDeveloperControlledWalletsClient']>
-type Blockchains = Parameters<CircleClient['createWallets']>[0]['blockchains']
-type ListBlockchain = NonNullable<Parameters<CircleClient['listWallets']>[0]>['blockchain']
 
 const env = process.env
 const IS_MAINNET = env.VITE_NETWORK === 'mainnet'
@@ -57,12 +46,40 @@ const ALLOWED: Record<string, { target: 'usdc' | 'booking'; checks: RegExp[] }> 
 
 const isConfigured = () => Boolean(apiKey && entitySecret && bookingAddress && BLOCKCHAIN)
 
-let cached: CircleClient | undefined
-async function getClient(): Promise<CircleClient> {
-  if (!apiKey || !entitySecret || !isConfigured()) throw new Error('Wallet service is not configured')
-  if (!initiateClient) throw new Error('Circle SDK could not be loaded in this runtime')
-  cached ??= initiateClient({ apiKey, entitySecret })
-  return cached
+const CIRCLE_BASE = 'https://api.circle.com'
+
+type CircleBody = Record<string, unknown>
+type Json = { data?: Record<string, unknown> & { message?: string }; message?: string; code?: number }
+
+class CircleError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
+async function circleFetch(path: string, init: { method?: 'GET' | 'POST'; body?: CircleBody } = {}): Promise<Record<string, unknown>> {
+  if (!apiKey) throw new Error('Wallet service is not configured')
+  const res = await fetch(`${CIRCLE_BASE}${path}`, {
+    method: init.method ?? 'GET',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'X-Request-Id': randomUUID() },
+    body: init.body ? JSON.stringify(init.body) : undefined,
+  })
+  const json = (await res.json().catch(() => ({}))) as Json
+  if (!res.ok) throw new CircleError(json.message ?? `Circle request failed (${res.status})`, res.status)
+  return (json.data ?? {}) as Record<string, unknown>
+}
+
+let cachedPublicKey: string | undefined
+/** Every signed request needs a fresh ciphertext: the entity secret encrypted with Circle's public key. */
+async function entitySecretCiphertext(): Promise<string> {
+  if (!entitySecret) throw new Error('Wallet service is not configured')
+  cachedPublicKey ??= (await circleFetch('/v1/w3s/config/entity/publicKey')).publicKey as string
+  return publicEncrypt(
+    { key: cachedPublicKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
+    Buffer.from(entitySecret, 'hex'),
+  ).toString('base64')
 }
 
 const validToken = (t: unknown): t is string => typeof t === 'string' && /^[0-9a-f]{64}$/.test(t)
@@ -75,24 +92,29 @@ function idempotencyKeyFor(token: string, scope: string) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`
 }
 
-async function ensureWalletSet(client: CircleClient): Promise<string> {
+async function ensureWalletSet(): Promise<string> {
   if (env.CIRCLE_WALLET_SET_ID) return env.CIRCLE_WALLET_SET_ID
   // Wallet sets are not chain specific, so reuse the account's first one if it has any.
-  const existing = await client.listWalletSets({ pageSize: 1 })
-  const found = existing.data?.walletSets?.[0]
+  const existing = await circleFetch('/v1/w3s/walletSets?pageSize=1')
+  const found = (existing.walletSets as { id?: string }[] | undefined)?.[0]
   if (found?.id) return found.id
-  const created = await client.createWalletSet({
-    name: WALLET_SET_NAME,
-    idempotencyKey: idempotencyKeyFor(WALLET_SET_NAME, 'walletset'),
+  const created = await circleFetch('/v1/w3s/developer/walletSets', {
+    method: 'POST',
+    body: {
+      name: WALLET_SET_NAME,
+      idempotencyKey: idempotencyKeyFor(WALLET_SET_NAME, 'walletset'),
+      entitySecretCiphertext: await entitySecretCiphertext(),
+    },
   })
-  const id = created.data?.walletSet?.id
+  const id = (created.walletSet as { id?: string } | undefined)?.id
   if (!id) throw new Error('Could not create wallet set')
   return id
 }
 
-async function findWallet(client: CircleClient, token: string) {
-  const res = await client.listWallets({ refId: refIdFor(token), blockchain: BLOCKCHAIN as ListBlockchain, pageSize: 1 })
-  const wallet = res.data?.wallets?.[0]
+async function findWallet(token: string) {
+  const query = new URLSearchParams({ refId: refIdFor(token), blockchain: BLOCKCHAIN ?? '', pageSize: '1' })
+  const res = await circleFetch(`/v1/w3s/wallets?${query.toString()}`)
+  const wallet = (res.wallets as { id?: string; address?: string }[] | undefined)?.[0]
   return wallet?.id && wallet.address ? { walletId: wallet.id, address: wallet.address } : undefined
 }
 
@@ -103,20 +125,24 @@ export async function handleStatus(): Promise<Result> {
 export async function handleWallet(body: unknown): Promise<Result> {
   const token = (body as { token?: unknown } | null)?.token
   if (!validToken(token)) return { status: 400, body: { error: 'Invalid session' } }
-  const client = await getClient()
+  if (!isConfigured()) throw new Error('Wallet service is not configured')
 
-  const existing = await findWallet(client, token)
+  const existing = await findWallet(token)
   if (existing) return { status: 200, body: existing }
 
-  const created = await client.createWallets({
-    accountType: 'EOA',
-    blockchains: [BLOCKCHAIN] as unknown as Blockchains,
-    count: 1,
-    walletSetId: await ensureWalletSet(client),
-    metadata: [{ name: 'patient', refId: refIdFor(token) }],
-    idempotencyKey: idempotencyKeyFor(token, 'wallet'),
+  const created = await circleFetch('/v1/w3s/developer/wallets', {
+    method: 'POST',
+    body: {
+      accountType: 'EOA',
+      blockchains: [BLOCKCHAIN],
+      count: 1,
+      walletSetId: await ensureWalletSet(),
+      metadata: [{ name: 'patient', refId: refIdFor(token) }],
+      idempotencyKey: idempotencyKeyFor(token, 'wallet'),
+      entitySecretCiphertext: await entitySecretCiphertext(),
+    },
   })
-  const wallet = created.data?.wallets?.[0]
+  const wallet = (created.wallets as { id?: string; address?: string }[] | undefined)?.[0]
   if (!wallet?.id || !wallet.address) throw new Error('Could not create wallet')
   return { status: 200, body: { walletId: wallet.id, address: wallet.address } }
 }
@@ -126,8 +152,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 export async function handleExec(body: unknown): Promise<Result> {
   const { token, signature, params } = (body ?? {}) as { token?: unknown; signature?: unknown; params?: unknown }
   if (!validToken(token)) return { status: 400, body: { error: 'Invalid session' } }
-  const client = await getClient()
-  const wallet = await findWallet(client, token)
+  if (!isConfigured()) throw new Error('Wallet service is not configured')
+  const wallet = await findWallet(token)
   if (!wallet) return { status: 400, body: { error: 'Wallet not found' } }
 
   const rule = typeof signature === 'string' ? ALLOWED[signature] : undefined
@@ -142,20 +168,25 @@ export async function handleExec(body: unknown): Promise<Result> {
     values.push(v)
   }
 
-  const sent = await client.createContractExecutionTransaction({
-    walletId: wallet.walletId,
-    contractAddress: rule.target === 'usdc' ? USDC_ADDRESS : (bookingAddress as string),
-    abiFunctionSignature: signature as string,
-    abiParameters: values,
-    fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
+  const sent = await circleFetch('/v1/w3s/developer/transactions/contractExecution', {
+    method: 'POST',
+    body: {
+      walletId: wallet.walletId,
+      contractAddress: rule.target === 'usdc' ? USDC_ADDRESS : bookingAddress,
+      abiFunctionSignature: signature,
+      abiParameters: values,
+      feeLevel: 'MEDIUM',
+      idempotencyKey: randomUUID(),
+      entitySecretCiphertext: await entitySecretCiphertext(),
+    },
   })
-  const id = sent.data?.id
+  const id = sent.id as string | undefined
   if (!id) throw new Error('Circle did not return a transaction id')
 
   // Only COMPLETE is success. CONFIRMED means included in a block but not final.
   const deadline = Date.now() + 50_000
   for (;;) {
-    const tx = (await client.getTransaction({ id })).data?.transaction
+    const tx = (await circleFetch(`/v1/w3s/transactions/${id}`)).transaction as { state?: string; txHash?: string } | undefined
     if (tx?.state === 'COMPLETE') return { status: 200, body: { txHash: tx.txHash ?? '' } }
     if (tx?.state === 'FAILED' || tx?.state === 'DENIED' || tx?.state === 'CANCELLED') {
       return { status: 400, body: { error: `Transaction ${tx.state.toLowerCase()}` } }
@@ -179,11 +210,12 @@ export async function handleCheck(): Promise<Result> {
     return { status: 200, body: { ok: false, network: IS_MAINNET ? 'mainnet' : 'testnet', missing } }
   }
   try {
-    await (await getClient()).listWalletSets({ pageSize: 1 })
+    await circleFetch('/v1/w3s/walletSets?pageSize=1')
+    await entitySecretCiphertext()
     return { status: 200, body: { ok: true, network: IS_MAINNET ? 'mainnet' : 'testnet', blockchain: BLOCKCHAIN } }
   } catch (error) {
-    const e = error as { message?: string; response?: { status?: number } }
-    return { status: 200, body: { ok: false, circleStatus: e.response?.status, error: e.message ?? 'Circle rejected the request' } }
+    const e = error as { message?: string; status?: number }
+    return { status: 200, body: { ok: false, circleStatus: e.status, error: e.message ?? 'Circle rejected the request' } }
   }
 }
 
