@@ -11,7 +11,7 @@ import {
 } from '@circle-fin/modular-wallets-core'
 
 const circleClientKey = (import.meta.env.VITE_CIRCLE_CLIENT_KEY ?? import.meta.env.CIRCLE_API_KEY) as string | undefined
-const circleClientUrl = 'https://api.circle.com/v1/w3s'
+const circleClientUrl = 'https://modular-sdk.circle.com/v1/rpc/w3s/buidl'
 
 export const modularWalletAvailable = Boolean(circleClientKey)
 
