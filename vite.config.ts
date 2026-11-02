@@ -8,7 +8,9 @@ export default defineConfig(({ mode }) => {
 
   return {
   define: {
-    'import.meta.env.VITE_CIRCLE_CLIENT_KEY': JSON.stringify(process.env.CIRCLE_API_KEY || env.CIRCLE_API_KEY || ''),
+    'import.meta.env.VITE_CIRCLE_CLIENT_KEY': JSON.stringify(
+      process.env.VITE_CIRCLE_CLIENT_KEY || env.VITE_CIRCLE_CLIENT_KEY || ''
+    ),
   },
   plugins: [react(), nodePolyfills()],
   resolve: {
